@@ -6,6 +6,13 @@ from .serializers import StringAnalysisSerializer
 from .utils import analyze_string
 import hashlib
 
+
+
+from django.http import JsonResponse
+
+def home(request):
+    return JsonResponse({"message": "String Analyzer API is running 🚀"})
+
 # Natural Language Parser Helper
 def parse_natural_query(query: str):
     q = query.lower()
