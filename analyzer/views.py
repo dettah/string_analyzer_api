@@ -12,41 +12,35 @@ import re
 def home(request):
     return JsonResponse({"message": "String Analyzer API is running 🚀"})
 
-@api_view(['POST'])
-def create_string(request):
-    """POST /strings/ - Create new string (201, 409, 400, 422)"""
-    value = request.data.get("value")
+@api_view(['GET', 'POST'])
+def strings(request):
+    """GET /strings/ (list) + POST /strings/ (create)"""
+    if request.method == 'POST':
+        value = request.data.get("value")
+        
+        if value is None:
+            return Response({"error": '"value" field is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not isinstance(value, str):
+            return Response({"error": '"value" must be a string'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        
+        if len(value.strip()) == 0:
+            return Response({"error": '"value" cannot be empty'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
+        
+        props = analyze_string(value)
+        id_ = props["sha256_hash"]
+        
+        if StringAnalysis.objects.filter(id=id_).exists():
+            return Response({"error": "String already exists"}, status=status.HTTP_409_CONFLICT)
+        
+        obj = StringAnalysis.objects.create(id=id_, value=value, properties=props)
+        serializer = StringAnalysisSerializer(obj)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
     
-    # VALIDATE FIRST - NO ANALYSIS YET!
-    if value is None:
-        return Response({"error": '"value" field is required'}, status=status.HTTP_400_BAD_REQUEST)
-    
-    if not isinstance(value, str):
-        return Response({"error": '"value" must be a string'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-    
-    if len(value.strip()) == 0:
-        return Response({"error": '"value" cannot be empty'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
-    
-    # NOW SAFE TO ANALYZE
-    props = analyze_string(value)
-    id_ = props["sha256_hash"]
-    
-    # 409: Duplicate
-    if StringAnalysis.objects.filter(id=id_).exists():
-        return Response({"error": "String already exists"}, status=status.HTTP_409_CONFLICT)
-    
-    # Create
-    obj = StringAnalysis.objects.create(id=id_, value=value, properties=props)
-    serializer = StringAnalysisSerializer(obj)
-    return Response(serializer.data, status=status.HTTP_201_CREATED)
-
-@api_view(['GET'])
-def string_collection(request):
-    """GET /strings/ - List with filters (NO POST HERE!)"""
+    # GET logic (list + filters)
     qs = StringAnalysis.objects.all()
     filters_applied = {}
 
-    # 5 Filters
     is_palindrome = request.GET.get("is_palindrome")
     if is_palindrome is not None:
         val = is_palindrome.lower() == "true"
@@ -111,28 +105,6 @@ def string_detail(request, string_value):
             return Response({"error": "String not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
-def parse_natural_query(query: str):
-    q = query.lower()
-    parsed = {}
-    if "palindromic" in q or "palindrome" in q:
-        parsed["is_palindrome"] = True
-    if "single word" in q or "one word" in q:
-        parsed["word_count"] = 1
-    match = re.search(r"longer than (\d+)", q)
-    if match:
-        parsed["min_length"] = int(match.group(1)) + 1
-    if "containing the letter" in q:
-        match = re.search(r"letter (\w)", q)
-        if match:
-            parsed["contains_character"] = match.group(1)
-    if "first vowel" in q:
-        parsed["contains_character"] = "a"
-    if "letter z" in q:
-        parsed["contains_character"] = "z"
-    if not parsed:
-        raise ValueError("Unable to parse natural language query")
-    return parsed
-
 @api_view(['GET'])
 def filter_natural(request):
     """GET /strings/filter-by-natural-language/"""
@@ -141,17 +113,19 @@ def filter_natural(request):
         return Response({"error": "Missing query parameter"}, status=400)
     
     try:
-        parsed = parse_natural_query(query)
-        qs = StringAnalysis.objects.all()
+        # Simple parsing
+        q = query.lower()
+        parsed = {}
+        if "palindromic" in q or "palindrome" in q:
+            parsed["is_palindrome"] = True
+        if "single word" in q or "one word" in q:
+            parsed["word_count"] = 1
         
+        qs = StringAnalysis.objects.all()
         if parsed.get("is_palindrome"):
             qs = qs.filter(properties__is_palindrome=True)
         if "word_count" in parsed:
             qs = qs.filter(properties__word_count=parsed["word_count"])
-        if "min_length" in parsed:
-            qs = qs.filter(properties__length__gte=parsed["min_length"])
-        if "contains_character" in parsed:
-            qs = qs.filter(value__icontains=parsed["contains_character"])
         
         serializer = StringAnalysisSerializer(qs, many=True)
         return Response({
@@ -159,5 +133,5 @@ def filter_natural(request):
             "count": qs.count(),
             "interpreted_query": {"original": query, "parsed_filters": parsed}
         })
-    except ValueError as e:
+    except Exception as e:
         return Response({"error": str(e)}, status=400)
