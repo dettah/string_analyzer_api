@@ -9,8 +9,8 @@ from .utils import analyze_string
 import hashlib
 import re
 
-def home(request):
-    return JsonResponse({"message": "String Analyzer API is running 🚀"})
+# def home(request):
+#     return JsonResponse({"message": "String Analyzer API is running 🚀"})
 
 @api_view(['GET', 'POST'])
 def strings(request):
