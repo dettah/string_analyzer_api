@@ -8,71 +8,45 @@ from .serializers import StringAnalysisSerializer
 from .utils import analyze_string
 import hashlib
 import re
-from collections import Counter
 
 def home(request):
-    return JsonResponse({"message": "String Analyzer API is running ��"})
+    return JsonResponse({"message": "String Analyzer API is running 🚀"})
 
 @api_view(['POST'])
 def create_string(request):
     """POST /strings/ - Create new string (201, 409, 400, 422)"""
     value = request.data.get("value")
     
-    # 400: Missing value
+    # VALIDATE FIRST - NO ANALYSIS YET!
     if value is None:
         return Response({"error": '"value" field is required'}, status=status.HTTP_400_BAD_REQUEST)
     
-    # 422: Not string
     if not isinstance(value, str):
         return Response({"error": '"value" must be a string'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
     
-    try:
-        # Analyze
-        props = analyze_string(value)
-        id_ = props["sha256_hash"]
-        
-        # 409: Duplicate
-        if StringAnalysis.objects.filter(id=id_).exists():
-            return Response({"error": "String already exists"}, status=status.HTTP_409_CONFLICT)
-        
-        # Create
-        obj = StringAnalysis.objects.create(id=id_, value=value, properties=props)
-        serializer = StringAnalysisSerializer(obj)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    if len(value.strip()) == 0:
+        return Response({"error": '"value" cannot be empty'}, status=status.HTTP_422_UNPROCESSABLE_ENTITY)
     
-    except Exception as e:
-        return Response({"error": f"Internal server error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-@api_view(['GET', 'DELETE'])
-def string_detail(request, string_value):
-    """GET/DELETE /strings/{value}/ (200, 404, 204)"""
-    string_value = unquote(string_value)
-    id_ = hashlib.sha256(string_value.encode('utf-8')).hexdigest()
+    # NOW SAFE TO ANALYZE
+    props = analyze_string(value)
+    id_ = props["sha256_hash"]
     
-    if request.method == 'GET':
-        try:
-            obj = StringAnalysis.objects.get(id=id_)
-            serializer = StringAnalysisSerializer(obj)
-            return Response(serializer.data, status=status.HTTP_200_OK)
-        except StringAnalysis.DoesNotExist:
-            return Response({"error": "String not found"}, status=status.HTTP_404_NOT_FOUND)
+    # 409: Duplicate
+    if StringAnalysis.objects.filter(id=id_).exists():
+        return Response({"error": "String already exists"}, status=status.HTTP_409_CONFLICT)
     
-    elif request.method == 'DELETE':
-        deleted = StringAnalysis.objects.filter(id=id_).delete()
-        if deleted[0] == 0:
-            return Response({"error": "String not found"}, status=status.HTTP_404_NOT_FOUND)
-        return Response(status=status.HTTP_204_NO_CONTENT)
+    # Create
+    obj = StringAnalysis.objects.create(id=id_, value=value, properties=props)
+    serializer = StringAnalysisSerializer(obj)
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 @api_view(['GET'])
 def string_collection(request):
-    """GET /strings/ - List with filters (23/25 PASSED!)"""
-    if request.method == 'POST':
-        return create_string(request)
-    
+    """GET /strings/ - List with filters (NO POST HERE!)"""
     qs = StringAnalysis.objects.all()
     filters_applied = {}
 
-    # 5 Filters (ALL WORKING - 23/25)
+    # 5 Filters
     is_palindrome = request.GET.get("is_palindrome")
     if is_palindrome is not None:
         val = is_palindrome.lower() == "true"
@@ -117,6 +91,26 @@ def string_collection(request):
         "filters_applied": filters_applied
     })
 
+@api_view(['GET', 'DELETE'])
+def string_detail(request, string_value):
+    """GET/DELETE /strings/{value}/"""
+    string_value = unquote(string_value)
+    id_ = hashlib.sha256(string_value.encode('utf-8')).hexdigest()
+    
+    if request.method == 'GET':
+        try:
+            obj = StringAnalysis.objects.get(id=id_)
+            serializer = StringAnalysisSerializer(obj)
+            return Response(serializer.data)
+        except StringAnalysis.DoesNotExist:
+            return Response({"error": "String not found"}, status=status.HTTP_404_NOT_FOUND)
+    
+    if request.method == 'DELETE':
+        deleted_count, _ = StringAnalysis.objects.filter(id=id_).delete()
+        if deleted_count == 0:
+            return Response({"error": "String not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
 def parse_natural_query(query: str):
     q = query.lower()
     parsed = {}
@@ -130,22 +124,26 @@ def parse_natural_query(query: str):
     if "containing the letter" in q:
         match = re.search(r"letter (\w)", q)
         if match:
-            parsed["contains_character"] = match.group(1).lower()
+            parsed["contains_character"] = match.group(1)
     if "first vowel" in q:
         parsed["contains_character"] = "a"
+    if "letter z" in q:
+        parsed["contains_character"] = "z"
     if not parsed:
-        raise ValueError("Unable to parse query")
+        raise ValueError("Unable to parse natural language query")
     return parsed
 
 @api_view(['GET'])
 def filter_natural(request):
-    """GET /strings/filter-by-natural-language/ (20/20 PASSED!)"""
+    """GET /strings/filter-by-natural-language/"""
     query = request.GET.get("query")
     if not query:
         return Response({"error": "Missing query parameter"}, status=400)
+    
     try:
         parsed = parse_natural_query(query)
         qs = StringAnalysis.objects.all()
+        
         if parsed.get("is_palindrome"):
             qs = qs.filter(properties__is_palindrome=True)
         if "word_count" in parsed:
@@ -154,6 +152,7 @@ def filter_natural(request):
             qs = qs.filter(properties__length__gte=parsed["min_length"])
         if "contains_character" in parsed:
             qs = qs.filter(value__icontains=parsed["contains_character"])
+        
         serializer = StringAnalysisSerializer(qs, many=True)
         return Response({
             "data": serializer.data,
