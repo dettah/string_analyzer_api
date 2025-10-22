@@ -113,7 +113,7 @@ def string_detail(request, string_value):
             deleted_count, _ = StringAnalysis.objects.filter(id=id_).delete()
             if deleted_count == 0:
                 return Response({"error": "String not found"}, status=status.HTTP_404_NOT_FOUND)
-            return Response(status=status.HTTP_204_NO_CONTENT
+            return Response(status=status.HTTP_204_NO_CONTENT)
     except StringAnalysis.DoesNotExist:
         return Response({"error": "String not found"}, status=status.HTTP_404_NOT_FOUND)
     except Exception as exc:
