@@ -1,4 +1,3 @@
-# analyzer/utils.py
 import hashlib
 from collections import Counter
 
